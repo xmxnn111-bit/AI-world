@@ -1,0 +1,5 @@
+{
+  "name": "AI Nexus front",
+  "description": "一个高度模仿 Google Gemini UI 的本地 AI 聚合平台，支持多模型选择和实时 WebSocket 流式对话。",
+  "requestFramePermissions": []
+}
