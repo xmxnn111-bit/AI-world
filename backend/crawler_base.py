@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from DrissionPage import ChromiumPage
 import time
-import json
+import asyncio
 
 class BaseBot(ABC):
     def __init__(self, page: ChromiumPage):
@@ -19,158 +19,147 @@ class BaseBot(ABC):
 
 class DeepSeekBot(BaseBot):
     """
-    针对 DeepSeek 的定制化实现
+    针对 DeepSeek 的 DOM 流式抓取实现 (HTML版本)
     """
     def activate_tab(self):
         target_url = "chat.deepseek.com"
         self.tab = None
 
-        # --- 修复逻辑：稳健获取标签页 ---
         try:
-            # 尝试通过 URL 获取标签页
-            # 注意：在某些版本中，如果找不到会抛出异常，而不是返回 None
             self.tab = self.page.get_tab(url=target_url)
-
-            # 双重检查：确保获取到的对象不为空
             if self.tab:
                 print(f"✅ 找到已有 DeepSeek 标签页: {self.tab.title}")
-                # 将标签页置顶
                 self.tab.activate()
-
         except Exception:
-            # 如果 get_tab 抛出异常（说明没找到），这里捕获它，不让程序崩溃
-            # print("当前未找到 DeepSeek 标签页，准备新建...")
             pass
 
-        # 如果经过上面的尝试还是没有 tab，则新建
         if not self.tab:
             print("🆕 正在新建 DeepSeek 标签页...")
             self.tab = self.page.new_tab("https://chat.deepseek.com/")
-            # 给页面一点加载时间，避免立即操作导致元素找不到
-            time.sleep(3)
+            time.sleep(1)
 
-        # 再次确保页面已加载完毕
         try:
             self.tab.wait.load_start()
         except:
             pass
 
-    def stream_chat(self, message: str):
+# 新增：停止生成逻辑
+    def stop_generation(self):
+        print("[DeepSeek] 尝试停止生成...")
+        if not self.tab: return
+
+        # 定位按钮：发送按钮和停止按钮通常是同一个 DOM 元素
+        # 停止按钮状态：没有 .ds-icon-button--disabled 类，aria-disabled="false"
+        try:
+            stop_btn = self.tab.ele('css:._7436101')
+            if stop_btn:
+                # 我们可以检查一下状态，或者直接点击（因为前端只在生成时才允许点停止）
+                # 如果你想严谨一点，可以检查 class
+                # class_attr = stop_btn.attr('class')
+                # if 'ds-icon-button--disabled' not in class_attr:
+                stop_btn.click()
+                print("[DeepSeek] 已点击停止按钮")
+        except Exception as e:
+            print(f"[DeepSeek] 停止操作失败: {e}")
+
+    async def stream_chat(self, message: str):
         if not self.tab:
             self.activate_tab()
 
         print(f"[DeepSeek] 准备发送: {message}")
 
         try:
-            # --- 1. 定位输入框 ---
-            # 优先使用你提供的特定 Class，同时也保留 placeholder 作为兜底
+            # 1. 记录当前回答数量 (用于定位最新一条)
+            existing_answers = self.tab.eles('css:.ds-markdown')
+            existing_count = len(existing_answers)
+
+            # 2. 定位输入框并发送
             input_ele = self.tab.ele('css:textarea._27c9245')
             if not input_ele:
                 input_ele = self.tab.ele('css:textarea[placeholder*="DeepSeek"]')
 
             if not input_ele:
-                yield "[系统错误] 无法定位输入框，请检查登录状态"
+                yield "Error: 无法定位输入框"
                 return
 
-            # --- 2. 模拟输入 (触发 React 状态) ---
             input_ele.clear()
-            # input() 方法会自动模拟点击和键盘输入，通常能触发 React 的 onChange 事件
             input_ele.input(message)
+            time.sleep(0.5)
 
-            # 关键：给 React 一点时间渲染，让发送按钮从 disable 变为 enable
-            time.sleep(0.6)
-
-            # --- 3. 点击发送按钮 ---
-            # 使用你提供的 div class (包含 svg 的那个容器)
-            # 这里的类名非常长，我们取其中独特的部分即可，或者用精确匹配
+            # 点击发送
             send_btn = self.tab.ele('css:._7436101')
             if send_btn:
                 send_btn.click()
             else:
-                # 如果找不到按钮，回车通常也是有效的
-                print("[DeepSeek] 未找到按钮，尝试回车发送")
                 input_ele.input('\n')
 
-            print("[DeepSeek] 消息已提交，开始监听...")
+            print("[DeepSeek] 消息已提交...")
 
         except Exception as e:
-            yield f"[系统提示] 发送指令失败: {str(e)}"
+            yield f"Error: 发送失败 {str(e)}"
             return
 
-        # --- 4. 开启监听 ---
-        # 建议不设 targets 或设为 'completion' (取决于 URL 包含什么关键词)
-        # 这里为了稳健，先监听所有，在循环里通过 JSON 结构过滤
-        self.tab.listen.start('completion')
+        # 3. 等待新回答框出现 (最多等 10 秒)
+        answer_box = None
+        wait_start = time.time()
+        while time.time() - wait_start < 10:
+            current_answers = self.tab.eles('css:.ds-markdown')
+            if len(current_answers) > existing_count:
+                answer_box = current_answers[-1] # 锁定最新的一条
+                break
+            time.sleep(0.2)
 
-        # 变量：记录上一次已经推送给前端的字符长度
-        last_text_len = 0
-        start_time = time.time()
+        if not answer_box:
+            yield "" # 没等到新框，可能网络卡了，直接结束本次对话
+            return
 
-        try:
-            # 设置超时 120 秒
-            for packet in self.tab.listen.steps(timeout=120):
-                # 过滤非 JSON 响应
-                if 'application/json' not in packet.response.headers.get('content-type', ''):
-                    continue
+        # --- 4. 核心：多重保险的流式监听 ---
+        previous_html_len = 0
+        monitor_start = time.time()
+        last_change_time = time.time() # 上次内容变化的时间
 
-                try:
-                    # 获取响应体
-                    raw_data = packet.response.body
+        while True:
+            try:
+                # 实时获取 HTML
+                current_html = answer_box.inner_html
 
-                    # --- 5. JSON 结构解析 (根据你提供的数据) ---
-                    # 目标路径: data -> biz_data -> chat_messages -> [last] -> fragments -> [0] -> content
-                    if not isinstance(raw_data, dict):
-                        continue
+                # A. 内容有更新
+                if len(current_html) > previous_html_len:
+                    yield current_html # 全量发送
+                    previous_html_len = len(current_html)
+                    last_change_time = time.time() # 更新活跃时间
+                    monitor_start = time.time()    # 重置总超时
 
-                    data_node = raw_data.get("data")
-                    if not data_node: continue
+                # B. 内容无更新 -> 检查是否该退出了
+                else:
+                    # 1. 静默超时检测 (最稳健的退出机制)
+                    # 如果超过 3 秒内容没变，且内容不为空，认为生成结束
+                    if time.time() - last_change_time > 3 and len(current_html) > 0:
+                        print("[DeepSeek] 检测到静默超时，默认生成结束")
+                        break
 
-                    biz_data = data_node.get("biz_data")
-                    if not biz_data: continue
+                    # 3. 发送按钮检测
+                    # DeepSeek 生成时发送按钮通常是“停止(Stop)”图标，生成完变回“发送(Send)”
+                    # 如果能再次找到发送按钮，说明已就绪
+                    # (这里复用上面的 send_btn 选择器逻辑，或者根据实际情况调整)
+                    # if self.tab.ele('css:._7436101', timeout=0.1):
+                    #    pass
 
-                    chat_messages = biz_data.get("chat_messages")
-                    if not chat_messages: continue
-
-                    # 获取最新一条消息
-                    latest_msg = chat_messages[-1]
-
-                    # 必须是 AI (ASSISTANT) 的回复
-                    if latest_msg.get("role") == "ASSISTANT":
-                        fragments = latest_msg.get("fragments", [])
-                        if fragments:
-                            # 获取当前的完整文本 (DeepSeek 返回的是全量文本)
-                            full_content = fragments[0].get("content", "")
-
-                            # --- 6. 计算增量 (只发送新生成的字) ---
-                            if len(full_content) > last_text_len:
-                                # 截取新增加的部分
-                                new_chars = full_content[last_text_len:]
-                                # 更新计数器
-                                last_text_len = len(full_content)
-                                # Yield 出去
-                                yield new_chars
-
-                            # --- 7. 判断结束 ---
-                            if latest_msg.get("status") == "FINISHED":
-                                print("[DeepSeek] 生成完成")
-                                break
-
-                except Exception as parse_e:
-                    # 某个包解析失败不影响整体流程
-                    # print(f"解析包跳过: {parse_e}")
-                    pass
-
-                # 超时保护
-                if time.time() - start_time > 120:
-                    yield "\n[系统提示] 响应超时"
+                # C. 总超时保护 (防止死循环)
+                if time.time() - monitor_start > 30:
+                    print("[DeepSeek] 监听强制超时")
                     break
 
-        finally:
-            self.tab.listen.stop()
+                # 关键：使用 asyncio.sleep 允许 server.py 接收停止信号
+                await asyncio.sleep(0.2)
+
+            except Exception as e:
+                print(f"监听异常: {e}")
+                break
 
 class GPTBot(BaseBot):
     def activate_tab(self): pass
-    def stream_chat(self, message: str): yield ""
+    def stream_chat(self, message: str): yield "GPT 暂未实现"
 
 class BotFactory:
     @staticmethod
