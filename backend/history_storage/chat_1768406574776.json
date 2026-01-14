@@ -1,0 +1,18 @@
+{
+  "id": "chat_1768406574776",
+  "title": "今天是几号",
+  "model": "deepseek",
+  "messages": [
+    {
+      "role": "user",
+      "content": "今天是几号",
+      "timestamp": 1768406550633.0
+    },
+    {
+      "role": "assistant",
+      "content": "<p class=\"ds-markdown-paragraph\"><span>今天是 </span><strong><span>2026 年 1 月 14 日</span></strong><span>，星期三。</span></p>",
+      "timestamp": 1768406563662.0
+    }
+  ],
+  "updated_at": 1768406574.776
+}

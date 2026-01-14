@@ -1,31 +1,31 @@
-
 import { Model } from './types';
 
+// 使用更清晰、官方风格的图标 URL
 export const MODELS: Model[] = [
-  { 
-    id: "gpt", 
-    name: "ChatGPT-4o", 
-    icon: "https://upload.wikimedia.org/wikipedia/commons/0/04/ChatGPT_logo.svg" 
+  {
+    id: "gpt",
+    name: "ChatGPT-4o",
+    icon: "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://chatgpt.com&size=128"
   },
-  { 
-    id: "deepseek", 
-    name: "DeepSeek", 
-    icon: "https://pbs.twimg.com/profile_images/1749838495048384512/0Yn1s68m_400x400.jpg" 
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    icon: "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://deepseek.com&size=128" // DeepSeek 官方推特头像
   },
-  { 
-    id: "doubao", 
-    name: "豆包 (Doubao)", 
-    icon: "https://p9-flow-image.byteimg.com/tos-cn-i-6f68e96983/5766e4a66a704c32b534e6284f163b0e~tplv-6f68e96983-image.png" 
+  {
+    id: "doubao",
+    name: "Doubao",
+    icon: "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://doubao.com&size=128" // 豆包常用Logo资源
   },
-  { 
-    id: "grok", 
-    name: "Grok", 
-    icon: "https://upload.wikimedia.org/wikipedia/commons/f/f6/Grok_logo.svg" 
+  {
+    id: "grok",
+    name: "Grok",
+    icon: "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://grok.com&size=128"
   },
-  { 
-    id: "gemini", 
-    name: "Google Gemini", 
-    icon: "https://upload.wikimedia.org/wikipedia/commons/8/8a/Google_Gemini_logo.svg" 
+  {
+    id: "gemini",
+    name: "Gemini",
+    icon: "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://gemini.google.com&size=128"
   }
 ];
 
