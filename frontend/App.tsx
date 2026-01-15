@@ -14,10 +14,13 @@ import {
   X,
   Globe,
   Trash2,
-  MessageSquare
+  MessageSquare,
+  Copy,
+  RotateCw
 } from 'lucide-react';
 import { MODELS, WS_URL } from './constants';
 import { Model, Message, ViewState } from './types';
+import MarkdownRenderer from './components/MarkdownRenderer';
 
 // --- API 配置 ---
 const API_BASE = 'http://127.0.0.1:8000/api';
@@ -25,7 +28,7 @@ const API_BASE = 'http://127.0.0.1:8000/api';
 interface ChatSessionSummary {
   id: string;
   title: string;
-  model: string; // 关键字段：用于过滤
+  model: string;
   updated_at: number;
 }
 
@@ -78,7 +81,11 @@ type LangType = 'zh' | 'en';
 
 const App: React.FC = () => {
   // --- 状态管理 ---
-  const [view, setView] = useState<ViewState>(ViewState.LANDING);
+  const [view, setView] = useState<ViewState>(() => {
+    const savedView = localStorage.getItem('app_view');
+    return (savedView as ViewState) || ViewState.LANDING;
+  });
+
   const [selectedModel, setSelectedModel] = useState<Model>(MODELS[0]);
 
   // Key: Model ID, Value: Message[]
@@ -91,7 +98,10 @@ const App: React.FC = () => {
 
   // 历史记录 API 相关
   const [historyList, setHistoryList] = useState<ChatSessionSummary[]>([]);
-  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+
+  const [currentChatId, setCurrentChatId] = useState<string | null>(() => {
+    return localStorage.getItem('current_chat_id');
+  });
 
   const [lang, setLang] = useState<LangType>('zh');
   const [showSettings, setShowSettings] = useState(false);
@@ -102,18 +112,29 @@ const App: React.FC = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const currentChatIdRef = useRef(currentChatId);
 
-  // 计算当前视图显示的 messages
+  // === 1. 新增：智能滚动开关 ===
+  const shouldAutoScrollRef = useRef(true);
+
   const currentMessages = useMemo(() => {
     return conversations[selectedModel.id] || [];
   }, [conversations, selectedModel.id]);
 
-  // 计算当前模型是否正在输入
   const isCurrentModelTyping = useMemo(() => {
     return typingStatus[selectedModel.id] || false;
   }, [typingStatus, selectedModel.id]);
 
+  // --- 持久化副作用 ---
+  useEffect(() => {
+    localStorage.setItem('app_view', view);
+  }, [view]);
+
   useEffect(() => {
     currentChatIdRef.current = currentChatId;
+    if (currentChatId) {
+      localStorage.setItem('current_chat_id', currentChatId);
+    } else {
+      localStorage.removeItem('current_chat_id');
+    }
   }, [currentChatId]);
 
   // --- API 操作 ---
@@ -129,20 +150,19 @@ const App: React.FC = () => {
       const res = await fetch(`${API_BASE}/history/${id}`);
       if (res.ok) {
         const data = await res.json();
-        // 这里不需要切换模型，因为列表中只显示当前模型的历史
-        // 但为了保险，还是做一个检查
         if (data.model !== selectedModel.id) {
           const targetModel = MODELS.find(m => m.id === data.model);
           if (targetModel) setSelectedModel(targetModel);
         }
 
-        // 加载历史
         setConversations(prev => ({
           ...prev,
           [data.model]: data.messages || []
         }));
 
         setCurrentChatId(data.id);
+        // === 2. 强制滚动 ===
+        shouldAutoScrollRef.current = true;
         if (view === ViewState.LANDING) setView(ViewState.CHAT);
       }
     } catch (err) { console.error(err); }
@@ -162,10 +182,8 @@ const App: React.FC = () => {
     if (msgs.length === 0) return;
     const id = chatId || `chat_${Date.now()}`;
     if (!chatId) setCurrentChatId(id);
-
     const firstUserMsg = msgs.find(m => m.role === 'user');
     const title = firstUserMsg ? firstUserMsg.content.slice(0, 20) : 'New Chat';
-
     try {
       await fetch(`${API_BASE}/history`, {
         method: 'POST',
@@ -178,13 +196,29 @@ const App: React.FC = () => {
     } catch (err) { console.error(err); }
   };
 
-  // --- 初始化 ---
-  useEffect(() => { fetchHistory(); }, []);
-
-  // 自动滚动
+  // --- 初始化逻辑 ---
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [currentMessages]);
+    fetchHistory();
+    if (view === ViewState.CHAT && currentChatId) {
+      loadChatSession(currentChatId);
+    }
+  }, []);
+
+  // === 3. 新增：滚动监听函数 ===
+  const handleScroll = () => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    // 阈值设为 100px，如果距离底部超过 100px，则停止自动滚动
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
+    shouldAutoScrollRef.current = isAtBottom;
+  };
+
+  // === 4. 修改：智能自动滚动 ===
+  useEffect(() => {
+    if (scrollRef.current && shouldAutoScrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [currentMessages, isCurrentModelTyping]);
 
   // --- WebSocket 核心逻辑 ---
   const connectWebSocket = useCallback(() => {
@@ -242,15 +276,15 @@ const App: React.FC = () => {
   const startNewChat = () => {
     setConversations(prev => ({ ...prev, [selectedModel.id]: [] }));
     setCurrentChatId(null);
+    shouldAutoScrollRef.current = true; // 强制滚动
     setInput('');
   };
 
   const handleModelChange = (model: Model) => {
     if (selectedModel.id !== model.id) {
       setSelectedModel(model);
-      // 切换模型时，ID 暂时置空，除非后续有逻辑自动加载该模型上次的活跃会话
-      // 这里保持简单：切换模型 = 准备新对话或查看该模型缓存
       setCurrentChatId(null);
+      shouldAutoScrollRef.current = true; // 强制滚动
     }
   };
 
@@ -265,11 +299,15 @@ const App: React.FC = () => {
 
     if (!input.trim() || !isConnected) return;
 
+    // 强制滚动到底部
+    shouldAutoScrollRef.current = true;
+
     const userMessage: Message = { role: 'user', content: input, timestamp: Date.now() };
 
+    const nextMessages = [...(conversations[selectedModel.id] || []), userMessage];
     setConversations(prev => ({
       ...prev,
-      [selectedModel.id]: [...(prev[selectedModel.id] || []), userMessage]
+      [selectedModel.id]: nextMessages
     }));
 
     setTypingStatus(prev => ({ ...prev, [selectedModel.id]: true }));
@@ -281,8 +319,60 @@ const App: React.FC = () => {
         message: input
       }));
     }
+
+    if (!currentChatId) {
+      const newId = `chat_${Date.now()}`;
+      setCurrentChatId(newId);
+
+      const optimisticHistoryItem: ChatSessionSummary = {
+        id: newId,
+        title: input.slice(0, 20),
+        model: selectedModel.id,
+        updated_at: Date.now() / 1000
+      };
+      setHistoryList(prev => [optimisticHistoryItem, ...prev]);
+
+      saveCurrentChatToBackend(nextMessages, selectedModel.id, newId);
+    }
+
     setInput('');
   };
+
+  // --- 新增：重新生成与复制逻辑 ---
+  const handleRegenerate = () => {
+    if (isCurrentModelTyping || currentMessages.length === 0) return;
+
+    shouldAutoScrollRef.current = true; // 强制滚动
+
+    const reversedMsgs = [...currentMessages].reverse();
+    const lastUserMsgIndex = reversedMsgs.findIndex(m => m.role === 'user');
+
+    if (lastUserMsgIndex === -1) return;
+
+    const realUserIndex = currentMessages.length - 1 - lastUserMsgIndex;
+    const lastUserMsg = currentMessages[realUserIndex];
+
+    const newHistory = currentMessages.slice(0, realUserIndex + 1);
+
+    setConversations(prev => ({
+      ...prev,
+      [selectedModel.id]: newHistory
+    }));
+    setTypingStatus(prev => ({ ...prev, [selectedModel.id]: true }));
+
+    if (socketRef.current) {
+      socketRef.current.send(JSON.stringify({
+        type: 'chat',
+        model: selectedModel.id,
+        message: lastUserMsg.content
+      }));
+    }
+  };
+
+  const handleCopyContent = (content: string) => {
+    navigator.clipboard.writeText(content);
+  };
+
 
   // --- Settings Modal ---
   const SettingsModal = () => {
@@ -385,7 +475,6 @@ const App: React.FC = () => {
 
   // --- Chat View ---
   const Sidebar = () => {
-    // === 核心修改：实时过滤，只保留当前模型的历史 ===
     const filteredHistory = historyList.filter(item => item.model === selectedModel.id);
 
     return (
@@ -403,7 +492,6 @@ const App: React.FC = () => {
             <div className="flex-1 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
               <p className="px-3 text-xs font-medium text-gray-500 mb-2 mt-2 uppercase tracking-wider">{t('recent')}</p>
 
-              {/* 这里的空状态提示也随模型变化 */}
               {filteredHistory.length === 0 && (
                   <div className="px-3 py-4 text-xs text-gray-400 text-center italic opacity-60">
                     No history for {selectedModel.name}
@@ -429,7 +517,7 @@ const App: React.FC = () => {
   };
 
   return (
-      <div className="h-screen w-full flex bg-white text-gray-900 font-[Inter,sans-serif]">
+      <div className="h-screen w-full flex bg-white text-gray-900 font-[Inter,sans-serif] animate-in fade-in slide-in-from-bottom-8 duration-500">
         <SettingsModal />
         <Sidebar />
         <main className="flex-1 flex flex-col relative h-full min-w-0 bg-white">
@@ -437,8 +525,9 @@ const App: React.FC = () => {
             <div className="absolute left-4 z-30">
               {!sidebarOpen && <button onClick={() => setSidebarOpen(true)} className="p-2.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors shadow-sm bg-white border border-gray-100"><Menu className="w-5 h-5" /></button>}
             </div>
+
             <div className="w-full flex justify-center">
-              <div className="flex items-center p-1.5 bg-[#f0f4f9]/80 backdrop-blur-md rounded-full shadow-sm border border-white/50 gap-1 overflow-x-auto no-scrollbar max-w-[90%] md:max-w-fit transition-all duration-300">
+              <div className="flex items-center p-1.5 bg-[#f0f4f9]/80 backdrop-blur-md rounded-full shadow-sm border border-white/50 gap-1 overflow-x-auto no-scrollbar max-w-[90%] md:max-w-4xl transition-all duration-300">
                 {MODELS.map(model => {
                   const isActive = selectedModel.id === model.id;
                   const isTyping = typingStatus[model.id];
@@ -457,7 +546,11 @@ const App: React.FC = () => {
             </div>
           </header>
 
-          <div ref={scrollRef} className="flex-1 overflow-y-auto w-full pt-24 pb-4 px-4 scrollbar-hide">
+          <div
+              ref={scrollRef}
+              onScroll={handleScroll}
+              className="flex-1 overflow-y-auto w-full pt-24 pb-40 px-4 scrollbar-hide"
+          >
             {currentMessages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center p-8 max-w-4xl mx-auto animate-in fade-in duration-700">
                   <div className="flex flex-col items-center text-center space-y-8">
@@ -473,20 +566,53 @@ const App: React.FC = () => {
                   </div>
                 </div>
             ) : (
-                <div className="max-w-3xl mx-auto py-4 pb-12">
+                <div className="max-w-3xl mx-auto py-4">
                   {currentMessages.map((msg, index) => (
                       <div key={index} className={`mb-8 flex gap-5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
                         {msg.role === 'assistant' && (<div className="w-9 h-9 rounded-full flex-shrink-0 mt-1 overflow-hidden border border-gray-100 shadow-sm bg-white p-0.5"><img src={selectedModel.icon} className="w-full h-full object-cover rounded-full" /></div>)}
-                        <div className={`max-w-full md:max-w-[85%] lg:max-w-[90%] ${msg.role === 'user' ? 'bg-[#f0f4f9] text-gray-800 rounded-[24px] px-6 py-4 rounded-tr-sm' : 'bg-transparent text-gray-900 px-0 py-0 w-full'}`}>
-                          {msg.role === 'user' ? (<p className="whitespace-pre-wrap leading-relaxed text-[15px]">{msg.content}</p>) : (
-                              <div className="prose prose-slate max-w-none prose-p:leading-8 prose-p:text-gray-800 prose-p:text-[16px] prose-headings:font-semibold prose-headings:text-gray-900 prose-pre:bg-[#1e1e1e] prose-pre:text-gray-100 prose-pre:rounded-xl prose-pre:p-4 prose-li:text-gray-800 prose-code:text-[#d96570] prose-code:bg-[#f2f2f2] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:font-mono prose-code:text-sm prose-a:text-[#0b57d0] prose-a:no-underline hover:prose-a:underline" dangerouslySetInnerHTML={{ __html: msg.content }} />
+
+                        <div className={`max-w-full md:max-w-[85%] lg:max-w-[90%] ${msg.role === 'user' ? 'bg-[#f0f4f9] text-gray-800 rounded-[24px] px-6 py-4 rounded-tr-sm' : 'bg-transparent text-gray-900 px-0 py-0 w-full min-w-0'}`}>
+
+                          {msg.role === 'user' ? (
+                              <p className="whitespace-pre-wrap leading-relaxed text-[15px]">{msg.content}</p>
+                          ) : (
+                              <div className="group">
+                                <MarkdownRenderer content={msg.content} />
+
+                                {!isCurrentModelTyping && (
+                                    <div className="mt-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                      <button
+                                          onClick={() => handleCopyContent(msg.content)}
+                                          className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                                      >
+                                        <Copy className="w-3.5 h-3.5" />
+                                        <span>复制</span>
+                                      </button>
+
+                                      {index === currentMessages.length - 1 && (
+                                          <button
+                                              onClick={handleRegenerate}
+                                              className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                                          >
+                                            <RotateCw className="w-3.5 h-3.5" />
+                                            <span>重新生成</span>
+                                          </button>
+                                      )}
+                                    </div>
+                                )}
+                              </div>
                           )}
                         </div>
                       </div>
                   ))}
+
                   {isCurrentModelTyping && (
                       <div className="flex gap-4 items-center pl-14">
-                        <div className="flex gap-1.5 h-3 items-center opacity-60"><div className="w-2 h-2 bg-[#4285f4] rounded-full animate-bounce"></div><div className="w-2 h-2 bg-[#d96570] rounded-full animate-bounce [animation-delay:0.1s]"></div><div className="w-2 h-2 bg-[#fbbc04] rounded-full animate-bounce [animation-delay:0.2s]"></div></div>
+                        <div className="flex gap-1.5 h-3 items-center opacity-80">
+                          <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce"></div>
+                          <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:0.1s]"></div>
+                          <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                        </div>
                       </div>
                   )}
                 </div>
