@@ -117,31 +117,32 @@ active_tasks = {}
 # Key: model_name, Value: Bot Instance
 active_bots = {}
 
-async def handle_chat_stream(websocket: WebSocket, bot, message: str, model_name: str):
+# === 修改点 1: 增加 chat_id 参数，并在返回消息中带上它 ===
+async def handle_chat_stream(websocket: WebSocket, bot, message: str, model_name: str, chat_id: str):
     try:
         async for content in bot.stream_chat(message):
-            # 修改点：发送 JSON 对象，包含 model 标识，以便前端区分是哪个模型在说话
             await websocket.send_json({
                 "type": "chunk",
                 "model": model_name,
+                "chatId": chat_id, # <--- 关键：把 ID 传回去，前端靠这个分发消息
                 "content": content
             })
 
-        # 结束信号也带上 model
         await websocket.send_json({
             "type": "done",
-            "model": model_name
+            "model": model_name,
+            "chatId": chat_id
         })
 
     except asyncio.CancelledError:
-        print(f"任务被取消: {model_name}")
-        # 即使取消，最好也发个信号让前端释放状态
-        await websocket.send_json({"type": "done", "model": model_name})
+        print(f"任务被取消: {chat_id}")
+        await websocket.send_json({"type": "done", "model": model_name, "chatId": chat_id})
     except Exception as e:
         print(f"流式传输错误 ({model_name}): {e}")
         await websocket.send_json({
             "type": "error",
             "model": model_name,
+            "chatId": chat_id,
             "content": str(e)
         })
 
@@ -159,54 +160,53 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_json()
             msg_type = data.get("type", "chat")
 
-            # 1. 停止指令 (针对特定模型停止，或者全部停止)
+            # 1. 停止指令
             if msg_type == "stop":
+                # 修改：根据 chatId 停止特定任务
+                target_chat_id = data.get("chatId")
                 target_model = data.get("model")
-                if target_model and target_model in active_tasks:
-                    # 只停止指定模型的生成
-                    if not active_tasks[target_model].done():
-                        active_tasks[target_model].cancel()
-                    if target_model in active_bots:
-                        active_bots[target_model].stop_generation()
+
+                if target_chat_id and target_chat_id in active_tasks:
+                    if not active_tasks[target_chat_id].done():
+                        active_tasks[target_chat_id].cancel()
+
+                # 如果需要停止底层生成（如 DeepSeek 按钮），还是需要 model
+                if target_model and target_model in active_bots:
+                    active_bots[target_model].stop_generation()
                 continue
 
             # 2. 聊天请求
             model_name = data.get("model")
             user_msg = data.get("message")
+            chat_id = data.get("chatId") # <--- 获取前端传来的 ID
 
-            if not model_name or not user_msg:
+            if not model_name or not user_msg or not chat_id:
                 continue
 
-            # 关键修改：只取消 **当前模型** 之前的任务，不影响其他模型
-            if model_name in active_tasks and not active_tasks[model_name].done():
-                active_tasks[model_name].cancel()
+            # 如果同一个会话再次提问，取消该会话之前的任务
+            if chat_id in active_tasks and not active_tasks[chat_id].done():
+                active_tasks[chat_id].cancel()
 
             try:
-                # 获取或创建 Bot 实例 (这里假设 BotFactory 可以处理多 Tab 或并发)
-                # 注意：如果 crawler_base 只有单 Tab，这里可能需要 bot.activate_tab()
-                # 但为了并发，最好 bot 内部维护自己的 tab 对象
                 current_bot = BotFactory.get_bot(model_name, page)
                 active_bots[model_name] = current_bot
 
-                # 激活该模型的 Tab (如果是基于浏览器的话，物理层面可能还是会有焦点抢占，但逻辑上已分离)
-                # current_bot.activate_tab()
-
-                # 创建新任务并存入字典
+                # 创建任务，使用 chat_id 作为 Key
                 task = asyncio.create_task(
-                    handle_chat_stream(websocket, current_bot, user_msg, model_name)
+                    handle_chat_stream(websocket, current_bot, user_msg, model_name, chat_id)
                 )
-                active_tasks[model_name] = task
+                active_tasks[chat_id] = task
 
             except Exception as e:
                 await websocket.send_json({
                     "type": "error",
                     "model": model_name,
+                    "chatId": chat_id,
                     "content": str(e)
                 })
 
     except WebSocketDisconnect:
         print("前端已断开连接")
-        # 清理所有任务
         for task in active_tasks.values():
             if not task.done():
                 task.cancel()

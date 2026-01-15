@@ -88,8 +88,10 @@ const App: React.FC = () => {
 
   const [selectedModel, setSelectedModel] = useState<Model>(MODELS[0]);
 
-  // Key: Model ID, Value: Message[]
+  // === 核心修改：Key 改为 ChatID ===
+  // Key: Chat ID (不再是 Model ID), Value: Message[]
   const [conversations, setConversations] = useState<Record<string, Message[]>>({});
+  // Key: Chat ID, Value: boolean
   const [typingStatus, setTypingStatus] = useState<Record<string, boolean>>({});
 
   const [input, setInput] = useState('');
@@ -111,17 +113,19 @@ const App: React.FC = () => {
   const socketRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const currentChatIdRef = useRef(currentChatId);
-
-  // === 1. 新增：智能滚动开关 ===
   const shouldAutoScrollRef = useRef(true);
 
+  // 计算属性：仅获取当前 ChatID 的消息，确保数据隔离
   const currentMessages = useMemo(() => {
-    return conversations[selectedModel.id] || [];
-  }, [conversations, selectedModel.id]);
+    if (!currentChatId) return [];
+    return conversations[currentChatId] || [];
+  }, [conversations, currentChatId]);
 
+  // 计算属性：仅获取当前 ChatID 的输入状态
   const isCurrentModelTyping = useMemo(() => {
-    return typingStatus[selectedModel.id] || false;
-  }, [typingStatus, selectedModel.id]);
+    if (!currentChatId) return false;
+    return typingStatus[currentChatId] || false;
+  }, [typingStatus, currentChatId]);
 
   // --- 持久化副作用 ---
   useEffect(() => {
@@ -155,13 +159,13 @@ const App: React.FC = () => {
           if (targetModel) setSelectedModel(targetModel);
         }
 
+        // 修改点：使用 data.id (ChatID) 作为 Key
         setConversations(prev => ({
           ...prev,
-          [data.model]: data.messages || []
+          [data.id]: data.messages || []
         }));
 
         setCurrentChatId(data.id);
-        // === 2. 强制滚动 ===
         shouldAutoScrollRef.current = true;
         if (view === ViewState.LANDING) setView(ViewState.CHAT);
       }
@@ -179,17 +183,16 @@ const App: React.FC = () => {
   };
 
   const saveCurrentChatToBackend = async (msgs: Message[], modelId: string, chatId: string | null) => {
-    if (msgs.length === 0) return;
-    const id = chatId || `chat_${Date.now()}`;
-    if (!chatId) setCurrentChatId(id);
+    if (msgs.length === 0 || !chatId) return;
+
     const firstUserMsg = msgs.find(m => m.role === 'user');
-    const title = firstUserMsg ? firstUserMsg.content.slice(0, 20) : 'New Chat';
+    const title = firstUserMsg ? firstUserMsg.content.replace(/\n/g, ' ').trim().slice(0, 20) : 'New Chat';
     try {
       await fetch(`${API_BASE}/history`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id, title, model: modelId, messages: msgs, updated_at: Date.now() / 1000
+          id: chatId, title, model: modelId, messages: msgs, updated_at: Date.now() / 1000
         })
       });
       fetchHistory();
@@ -204,16 +207,13 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // === 3. 新增：滚动监听函数 ===
   const handleScroll = () => {
     if (!scrollRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
-    // 阈值设为 100px，如果距离底部超过 100px，则停止自动滚动
     const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
     shouldAutoScrollRef.current = isAtBottom;
   };
 
-  // === 4. 修改：智能自动滚动 ===
   useEffect(() => {
     if (scrollRef.current && shouldAutoScrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -229,27 +229,30 @@ const App: React.FC = () => {
 
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      const targetModel = data.model;
-      if (!targetModel) return;
+      const targetChatId = data.chatId; // <--- 关键：只处理指定 ChatID 的消息
+
+      if (!targetChatId) return;
 
       if (data.type === 'done' || data.type === 'error') {
-        setTypingStatus(prev => ({ ...prev, [targetModel]: false }));
+        setTypingStatus(prev => ({ ...prev, [targetChatId]: false }));
         return;
       }
 
       if (data.type === 'chunk') {
         const chunk = data.content;
         setConversations(prev => {
-          const modelMsgs = prev[targetModel] || [];
-          const lastMsg = modelMsgs[modelMsgs.length - 1];
-          let newModelMsgs;
+          // 只更新对应 ChatID 的消息列表，绝对不会影响当前视图（如果 ID 不同）
+          const currentChatMsgs = prev[targetChatId] || [];
+          const lastMsg = currentChatMsgs[currentChatMsgs.length - 1];
+
+          let newChatMsgs;
           if (lastMsg && lastMsg.role === 'assistant') {
-            newModelMsgs = [...modelMsgs];
-            newModelMsgs[newModelMsgs.length - 1] = { ...lastMsg, content: chunk };
+            newChatMsgs = [...currentChatMsgs];
+            newChatMsgs[newChatMsgs.length - 1] = { ...lastMsg, content: chunk };
           } else {
-            newModelMsgs = [...modelMsgs, { role: 'assistant', content: chunk, timestamp: Date.now() }];
+            newChatMsgs = [...currentChatMsgs, { role: 'assistant', content: chunk, timestamp: Date.now() }];
           }
-          return { ...prev, [targetModel]: newModelMsgs };
+          return { ...prev, [targetChatId]: newChatMsgs };
         });
       }
     };
@@ -265,8 +268,8 @@ const App: React.FC = () => {
   }, [view, connectWebSocket]);
 
   useEffect(() => {
-    if (!isCurrentModelTyping && currentMessages.length > 0) {
-      saveCurrentChatToBackend(currentMessages, selectedModel.id, currentChatIdRef.current);
+    if (!isCurrentModelTyping && currentMessages.length > 0 && currentChatId) {
+      saveCurrentChatToBackend(currentMessages, selectedModel.id, currentChatId);
     }
   }, [isCurrentModelTyping]);
 
@@ -274,9 +277,8 @@ const App: React.FC = () => {
   // --- 交互逻辑 ---
 
   const startNewChat = () => {
-    setConversations(prev => ({ ...prev, [selectedModel.id]: [] }));
     setCurrentChatId(null);
-    shouldAutoScrollRef.current = true; // 强制滚动
+    shouldAutoScrollRef.current = true;
     setInput('');
   };
 
@@ -284,86 +286,101 @@ const App: React.FC = () => {
     if (selectedModel.id !== model.id) {
       setSelectedModel(model);
       setCurrentChatId(null);
-      shouldAutoScrollRef.current = true; // 强制滚动
+      shouldAutoScrollRef.current = true;
     }
   };
 
   const handleSendMessage = () => {
-    if (isCurrentModelTyping) {
+    // === 1. 优先处理停止逻辑 ===
+    // 如果当前正在输出，点击按钮应该执行停止，而不检查输入框是否为空
+    if (isCurrentModelTyping && currentChatId) {
       if (socketRef.current) {
-        socketRef.current.send(JSON.stringify({ type: 'stop', model: selectedModel.id }));
+        socketRef.current.send(JSON.stringify({
+          type: 'stop',
+          chatId: currentChatId,
+          model: selectedModel.id
+        }));
       }
-      setTypingStatus(prev => ({ ...prev, [selectedModel.id]: false }));
+      // 立即更新前端状态停止 Loading 动画
+      setTypingStatus(prev => ({ ...prev, [currentChatId]: false }));
       return;
     }
 
+    // === 2. 再处理发送逻辑 ===
+    // 只有在非停止状态下，才检查输入框内容
     if (!input.trim() || !isConnected) return;
 
-    // 强制滚动到底部
+    // ... (以下发送逻辑保持不变) ...
+
+    // 1. 确定 ChatID
+    let activeChatId = currentChatId;
+    if (!activeChatId) {
+      activeChatId = `chat_${Date.now()}`;
+      setCurrentChatId(activeChatId);
+    }
+
     shouldAutoScrollRef.current = true;
 
     const userMessage: Message = { role: 'user', content: input, timestamp: Date.now() };
 
-    const nextMessages = [...(conversations[selectedModel.id] || []), userMessage];
+    // 2. 更新 State
+    const nextMessages = [...(conversations[activeChatId] || []), userMessage];
     setConversations(prev => ({
       ...prev,
-      [selectedModel.id]: nextMessages
+      [activeChatId]: nextMessages
     }));
 
-    setTypingStatus(prev => ({ ...prev, [selectedModel.id]: true }));
+    setTypingStatus(prev => ({ ...prev, [activeChatId]: true }));
 
+    // 3. 发送 WebSocket
     if (socketRef.current) {
       socketRef.current.send(JSON.stringify({
         type: 'chat',
         model: selectedModel.id,
+        chatId: activeChatId,
         message: input
       }));
     }
 
+    // 4. 乐观更新
     if (!currentChatId) {
-      const newId = `chat_${Date.now()}`;
-      setCurrentChatId(newId);
-
       const optimisticHistoryItem: ChatSessionSummary = {
-        id: newId,
-        title: input.slice(0, 20),
+        id: activeChatId,
+        title: input.replace(/\n/g, ' ').trim().slice(0, 20),
         model: selectedModel.id,
         updated_at: Date.now() / 1000
       };
       setHistoryList(prev => [optimisticHistoryItem, ...prev]);
-
-      saveCurrentChatToBackend(nextMessages, selectedModel.id, newId);
+      saveCurrentChatToBackend(nextMessages, selectedModel.id, activeChatId);
     }
 
     setInput('');
   };
 
-  // --- 新增：重新生成与复制逻辑 ---
   const handleRegenerate = () => {
-    if (isCurrentModelTyping || currentMessages.length === 0) return;
+    if (!currentChatId || isCurrentModelTyping || currentMessages.length === 0) return;
 
-    shouldAutoScrollRef.current = true; // 强制滚动
+    shouldAutoScrollRef.current = true;
 
     const reversedMsgs = [...currentMessages].reverse();
     const lastUserMsgIndex = reversedMsgs.findIndex(m => m.role === 'user');
-
     if (lastUserMsgIndex === -1) return;
 
     const realUserIndex = currentMessages.length - 1 - lastUserMsgIndex;
     const lastUserMsg = currentMessages[realUserIndex];
-
     const newHistory = currentMessages.slice(0, realUserIndex + 1);
 
     setConversations(prev => ({
       ...prev,
-      [selectedModel.id]: newHistory
+      [currentChatId]: newHistory // 使用 currentChatId
     }));
-    setTypingStatus(prev => ({ ...prev, [selectedModel.id]: true }));
+    setTypingStatus(prev => ({ ...prev, [currentChatId]: true }));
 
     if (socketRef.current) {
       socketRef.current.send(JSON.stringify({
         type: 'chat',
         model: selectedModel.id,
+        chatId: currentChatId, // <--- 关键
         message: lastUserMsg.content
       }));
     }
@@ -373,8 +390,8 @@ const App: React.FC = () => {
     navigator.clipboard.writeText(content);
   };
 
-
-  // --- Settings Modal ---
+  // ... (SettingsModal 和 View 代码保持不变，直接复用你现有的即可) ...
+  // 为节省篇幅，View 部分代码与上一版相同
   const SettingsModal = () => {
     if (!showSettings) return null;
     return (
@@ -411,7 +428,6 @@ const App: React.FC = () => {
     );
   };
 
-  // --- Landing View ---
   if (view === ViewState.LANDING) {
     return (
         <div className="relative h-screen w-full flex flex-col items-center justify-center bg-[#050505] overflow-hidden text-white selection:bg-blue-500/30">

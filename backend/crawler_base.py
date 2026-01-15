@@ -20,32 +20,20 @@ class BaseBot(ABC):
     def stream_chat(self, message: str):
         pass
 
-    # === 高级工程师优化：智能内容转换层 ===
     def _safe_to_markdown(self, content: str) -> str:
         """
         智能判断内容类型并转换为 Markdown。
-        策略：
-        1. 如果内容为空，直接返回。
-        2. 使用正则启发式检测是否包含 HTML 标签特征。
-        3. 只有检测到 HTML 结构时才调用 markdownify，防止误伤纯文本（如数学公式 x < y）。
-        4. 添加异常捕获，确保管道不会因为解析错误而中断。
         """
         if not content:
             return ""
 
         # 启发式检测：检查是否包含常见的 HTML 标签特征
-        # 我们主要关注块级元素或常见的行内格式标签
-        # <(p|div|span|pre|code|br|ul|ol|li|h[1-6]|table|blockquote)\b 是比较安全的特征
         html_pattern = re.compile(r'<(p|div|span|pre|code|br|ul|ol|li|h[1-6]|table|blockquote|em|strong|b|i)\b', re.IGNORECASE)
 
         if not html_pattern.search(content):
-            # 如果没有发现明显的 HTML 标签，视为纯文本/Markdown，直接返回
-            # 这样可以保护 "x < y" 这种数学公式不被当作非法 HTML 标签剔除
-            print("不是纯文本")
             return content
 
         try:
-            # heading_style="atx" 保证标题是 # 格式
             return md(content, heading_style="atx")
         except Exception as e:
             print(f"[Conversion Error] HTML转Markdown失败，降级为返回原始内容: {e}")
@@ -81,6 +69,7 @@ class DeepSeekBot(BaseBot):
             stop_btn = self.tab.ele('css:._7436101')
             if stop_btn:
                 stop_btn.click()
+                print("[DeepSeek] 已点击停止按钮")
         except Exception as e:
             print(f"[DeepSeek] 停止操作失败: {e}")
 
@@ -127,12 +116,9 @@ class DeepSeekBot(BaseBot):
 
         while True:
             try:
-                # 获取 inner_html，因为 DrissionPage 的 inner_html 会包含标签
-                # 如果是纯文本节点，它也会返回转义后的文本
                 current_html = answer_box.inner_html
 
                 if len(current_html) > previous_len:
-                    # === 调用父类的安全转换方法 ===
                     markdown_content = self._safe_to_markdown(current_html)
                     yield markdown_content
 
@@ -175,9 +161,28 @@ class GPTBot(BaseBot):
         except:
             pass
 
+    # === 修改点：使用 #composer-submit-button 作为停止按钮 ===
     def stop_generation(self):
-        print("[GPT] 停止功能暂未配置选择器")
-        pass
+        print("[GPT] 尝试停止生成...")
+        if not self.tab: return
+
+        try:
+            # 策略1: 优先使用你发现的通用 ID (发送/停止共用)
+            stop_btn = self.tab.ele('css:#composer-submit-button')
+
+            if stop_btn:
+                stop_btn.click()
+                print("[GPT] 已点击停止按钮 (#composer-submit-button)")
+            else:
+                # 策略2: 尝试找 data-testid="stop-button" 作为兜底
+                stop_btn = self.tab.ele('css:[data-testid="stop-button"]')
+                if stop_btn:
+                    stop_btn.click()
+                    print("[GPT] 已点击停止按钮 (fallback)")
+                else:
+                    print("[GPT] 未找到停止按钮 (可能已完成生成)")
+        except Exception as e:
+            print(f"[GPT] 停止操作异常: {e}")
 
     async def stream_chat(self, message: str):
         if not self.tab: self.activate_tab()
@@ -194,6 +199,8 @@ class GPTBot(BaseBot):
             input_ele.input(message)
             time.sleep(0.5)
             send_btn = self.tab.ele('css:#composer-submit-button')
+            if not send_btn: send_btn = self.tab.ele('css:[data-testid="send-button"]')
+
             if send_btn: send_btn.click()
             else: input_ele.input('\n')
             print("[GPT] 消息已提交...")
@@ -222,7 +229,6 @@ class GPTBot(BaseBot):
             try:
                 current_html = answer_box.inner_html
                 if len(current_html) > previous_len:
-                    # === 调用安全转换 ===
                     markdown_content = self._safe_to_markdown(current_html)
                     yield markdown_content
                     previous_len = len(current_html)
@@ -312,7 +318,6 @@ class DoubaoBot(BaseBot):
             try:
                 current_html = answer_box.inner_html
                 if len(current_html) > previous_len:
-                    # === 调用安全转换 ===
                     markdown_content = self._safe_to_markdown(current_html)
                     yield markdown_content
                     previous_len = len(current_html)

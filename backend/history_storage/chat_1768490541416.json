@@ -1,0 +1,28 @@
+{
+  "id": "chat_1768490541416",
+  "title": "今天天气怎么样",
+  "model": "gpt",
+  "messages": [
+    {
+      "role": "user",
+      "content": "今天天气怎么样",
+      "timestamp": 1768490541416.0
+    },
+    {
+      "role": "assistant",
+      "content": "我查看了今天\\*\\*新加坡（Singapore）\\*\\*的天气情况（基于官方和实时预报数据）。整体来说：\n\n今天气温维持在**约25–30°C（感觉更热）**左右，空气**潮湿**。白天通常是**多云到局部有雨/阵雨**的天气，部分时段可能会有**雷阵雨或降雨**发生。湿度较高，体感会比较闷热。[weather.gov.sg+1](https://www.weather.gov.sg/home/?utm_source=chatgpt.com)\n\n✔ 风速不大但湿热明显，傍晚和夜间也可能有雨区移动经过。[The Weather Channel](https://weather.com/en-SG/weather/hourbyhour/l/Singapore?placeId=04b1ba9f89761e8a1bbb7b75157cceeb5a9ceae218fd8c319d438fcaad611442&utm_source=chatgpt.com)  \n✔ 午后尤其容易出现突发性雷阵雨（这是热带天气的特色）。[weather.gov.sg](https://www.weather.gov.sg/home/?utm_source=chatgpt.com)\n\n总体感觉：**热、潮湿、有时多云，有阵雨机会**。\n\n要不要我帮你看看接下来几小时是不是会下雨（更具体的短时预报）？",
+      "timestamp": 1768490570642.0
+    },
+    {
+      "role": "user",
+      "content": "明天天气预报",
+      "timestamp": 1768490747590.0
+    },
+    {
+      "role": "assistant",
+      "content": "我查了**新加坡明天（2026年1月16日，星期五）的天气预报**，总结如下：\n\n明天整体还是典型的**热带天气**：气温偏高、湿度大、云量多，并且**下午有较高概率出现雷阵雨或阵雨**。[Weather Atlas+1](https://www.weather-atlas.com/zh/singapore-weather-tomorrow?utm_source=chatgpt.com)\n\n你可以这样想：  \n白天大部分时间**多云到云量较多**，最高气温**可达约30℃左右**，体感因湿度高可能会更闷热。[Weather Atlas](https://www.weather-atlas.com/en/singapore/singapore-weather-tomorrow?utm_source=chatgpt.com)  \n到了**下午和傍晚**，阵雨或雷阵雨的概率明显上升，是热带午后雷阵雨的典型节奏。[Weather Atlas](https://www.weather-atlas.com/zh/singapore-weather-tomorrow?utm_source=chatgpt.com)  \n夜间回到多云，气温回落到**约25℃左右**。[Weather Atlas](https://www.weather-atlas.com/en/singapore/singapore-weather-tomorrow?utm_source=chatgpt.com)\n\n整体感觉就是：**热、湿、多云，下午有较高的雷阵雨机会**。这种天气在新加坡这种赤道附近的气候里很常见。[Weather Atlas](https://www.weather-atlas.com/zh/singapore-weather-tomorrow?utm_source=chatgpt.com)\n\n如果你出去活动，带把伞或计划在室内避雨会比较稳妥。",
+      "timestamp": 1768490762352.0
+    }
+  ],
+  "updated_at": 1768492541.851
+}
