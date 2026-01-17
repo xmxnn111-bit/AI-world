@@ -1,0 +1,53 @@
+{
+  "id": "chat_1768666897479",
+  "title": "讲个故事吧",
+  "model": "gemini",
+  "messages": [
+    {
+      "role": "user",
+      "content": "讲个故事吧",
+      "timestamp": 1768666897479.0
+    },
+    {
+      "role": "assistant",
+      "content": "Error: \n与页面的连接已断开。\n版本: 4.1.1.2",
+      "timestamp": 1768666908071.0
+    },
+    {
+      "role": "user",
+      "content": "讲个故事吧",
+      "timestamp": 1768666913566.0
+    },
+    {
+      "role": "assistant",
+      "content": "Error: \n与页面的连接已断开。\n版本: 4.1.1.2",
+      "timestamp": 1768666934079.0
+    },
+    {
+      "role": "user",
+      "content": "讲个故事吧",
+      "timestamp": 1768667162543.0
+    },
+    {
+      "role": "assistant",
+      "content": "Error: \n与页面的连接已断开。\n版本: 4.1.1.2",
+      "timestamp": 1768667197650.0
+    },
+    {
+      "role": "user",
+      "content": "讲个故事吧",
+      "timestamp": 1768667374355.0
+    },
+    {
+      "role": "user",
+      "content": "讲个故事吧",
+      "timestamp": 1768667422907.0
+    },
+    {
+      "role": "assistant",
+      "content": "Error: \n与页面的连接已断开。\n版本: 4.1.1.2",
+      "timestamp": 1768667440466.0
+    }
+  ],
+  "updated_at": 1768667440.493
+}

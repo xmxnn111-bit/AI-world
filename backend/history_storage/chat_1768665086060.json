@@ -1,0 +1,28 @@
+{
+  "id": "chat_1768665086060",
+  "title": "哈喽",
+  "model": "gemini",
+  "messages": [
+    {
+      "role": "user",
+      "content": "哈喽",
+      "timestamp": 1768665086060.0
+    },
+    {
+      "role": "assistant",
+      "content": "Error: 无法定位 Gemini 输入框",
+      "timestamp": 1768665188340.0
+    },
+    {
+      "role": "user",
+      "content": "哈喽",
+      "timestamp": 1768665379481.0
+    },
+    {
+      "role": "user",
+      "content": "还在吗",
+      "timestamp": 1768665426490.0
+    }
+  ],
+  "updated_at": 1768665438.136
+}

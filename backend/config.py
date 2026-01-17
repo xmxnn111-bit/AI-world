@@ -25,7 +25,7 @@ MODEL_CONFIG = {
         'selectors': {
             'input': ['css:textarea._27c9245', 'css:textarea[placeholder*="DeepSeek"]'],
             'send': 'css:._7436101',
-            'stop': 'css:._7436101',
+            'stop': 'css:._7436101', #aria-disabled="false"
             'answer': 'css:.ds-markdown'
         }
     },
