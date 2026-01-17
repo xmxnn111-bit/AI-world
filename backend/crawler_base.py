@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from DrissionPage import ChromiumPage
 # 引入 markdownify
 from markdownify import markdownify as md
+
 import time
 import asyncio
 import re
@@ -161,20 +162,17 @@ class GPTBot(BaseBot):
         except:
             pass
 
-    # === 修改点：使用 #composer-submit-button 作为停止按钮 ===
     def stop_generation(self):
         print("[GPT] 尝试停止生成...")
         if not self.tab: return
 
         try:
-            # 策略1: 优先使用你发现的通用 ID (发送/停止共用)
             stop_btn = self.tab.ele('css:#composer-submit-button')
 
             if stop_btn:
                 stop_btn.click()
                 print("[GPT] 已点击停止按钮 (#composer-submit-button)")
             else:
-                # 策略2: 尝试找 data-testid="stop-button" 作为兜底
                 stop_btn = self.tab.ele('css:[data-testid="stop-button"]')
                 if stop_btn:
                     stop_btn.click()
@@ -335,10 +333,136 @@ class DoubaoBot(BaseBot):
                 print(f"[Doubao] 监听异常: {e}")
                 break
 
+class GeminiBot(BaseBot):
+    """
+    针对 Gemini 的 DOM 流式抓取实现
+    """
+    def activate_tab(self):
+        target_url = "gemini.google.com"
+        self.tab = None
+        try:
+            self.tab = self.page.get_tab(url=target_url)
+            if self.tab:
+                print(f"✅ 找到已有 Gemini 标签页: {self.tab.title}")
+                self.tab.activate()
+        except Exception:
+            pass
+        if not self.tab:
+            print("🆕 正在新建 Gemini 标签页...")
+            self.tab = self.page.new_tab("https://gemini.google.com/")
+            time.sleep(1)
+        try:
+            self.tab.wait.load_start()
+        except:
+            pass
+
+    def stop_generation(self):
+        print("[Gemini] 尝试停止生成...")
+        if not self.tab: return
+        try:
+            # 用户指定的停止按钮选择器
+            stop_btn = self.tab.ele('css:button[aria-label="停止回答"]')
+            if stop_btn:
+                stop_btn.click()
+                print("[Gemini] 已点击停止按钮")
+        except Exception as e:
+            print(f"[Gemini] 停止操作失败: {e}")
+
+    async def stream_chat(self, message: str):
+        if not self.tab: self.activate_tab()
+        print(f"[Gemini] 准备发送: {message}")
+        try:
+            # 1. 记录当前回答数量
+            # 用户指定的输出内容选择器
+            existing_answers = self.tab.eles('css:.markdown.markdown-main-panel')
+            existing_count = len(existing_answers)
+
+            # 2. 定位输入框
+            # 用户指定的输入框选择器
+            input_ele = self.tab.ele('css:.ql-editor.textarea p')
+            if not input_ele:
+                # 兜底：如果 p 标签不存在，尝试直接找 editor
+                input_ele = self.tab.ele('css:.ql-editor.textarea')
+
+            if not input_ele:
+                yield "Error: 无法定位 Gemini 输入框"
+                return
+
+            input_ele.clear()
+            input_ele.input(message)
+            time.sleep(0.5)
+
+            # 3. 点击发送
+            # 用户指定的发送按钮选择器
+            send_btn = self.tab.ele('css:.send-button')
+            if send_btn:
+                send_btn.click()
+            else:
+                input_ele.input('\n')
+
+            print("[Gemini] 消息已提交...")
+
+        except Exception as e:
+            yield f"Error: 发送失败 {str(e)}"
+            return
+
+        # 4. 等待新回答出现
+        answer_box = None
+        wait_start = time.time()
+        while time.time() - wait_start < 10:
+            current_answers = self.tab.eles('css:.markdown.markdown-main-panel')
+            if len(current_answers) > existing_count:
+                answer_box = current_answers[-1]
+                break
+            time.sleep(0.2)
+
+        if not answer_box:
+            # 如果没找到新增的，可能是第一次或者是新开的会话，尝试拿最后一个
+            current_answers = self.tab.eles('css:.markdown.markdown-main-panel')
+            if current_answers:
+                answer_box = current_answers[-1]
+            else:
+                yield ""
+                return
+
+        # 5. 流式输出
+        previous_len = 0
+        monitor_start = time.time()
+        last_change_time = time.time()
+
+        while True:
+            try:
+                current_html = answer_box.inner_html
+
+                if len(current_html) > previous_len:
+                    markdown_content = self._safe_to_markdown(current_html)
+                    yield markdown_content
+
+                    previous_len = len(current_html)
+                    last_change_time = time.time()
+                    monitor_start = time.time()
+                else:
+                    # 如果内容不再变化且已有内容，默认生成结束
+                    if time.time() - last_change_time > 3 and len(current_html) > 0:
+                        print("[Gemini] 检测到静默超时，默认生成结束")
+                        break
+
+                # 强制超时保护
+                if time.time() - monitor_start > 120:
+                    print("[Gemini] 监听强制超时")
+                    break
+
+                await asyncio.sleep(0.2)
+
+            except Exception as e:
+                print(f"[Gemini] 监听异常: {e}")
+                break
+
 class BotFactory:
     @staticmethod
     def get_bot(model_name: str, page: ChromiumPage) -> BaseBot:
         if model_name == 'deepseek': return DeepSeekBot(page)
         elif model_name == 'gpt': return GPTBot(page)
         elif model_name == 'doubao': return DoubaoBot(page)
+        elif model_name == 'gemini': return GeminiBot(page)
         else: raise ValueError(f"Unknown model: {model_name}")
