@@ -1,9 +1,3 @@
-from DrissionPage import ChromiumOptions
-
-
-path = r'C:\Program Files\Google\Chrome\Application\chrome.exe'
-ChromiumOptions().set_browser_path(path).save()
-
 
 from DrissionPage import ChromiumOptions
 
@@ -25,7 +19,7 @@ MODEL_CONFIG = {
         'selectors': {
             'input': ['css:textarea._27c9245', 'css:textarea[placeholder*="DeepSeek"]'],
             'send': 'css:._7436101',
-            'stop': 'css:._7436101', #aria-disabled="false"
+            'stop': 'css:._7436101[aria-disabled="false"]',
             'answer': 'css:.ds-markdown'
         }
     },
@@ -41,12 +35,12 @@ MODEL_CONFIG = {
         }
     },
     'doubao': {
-        'domain': 'dola.com',
-        'home_url': 'https://www.dola.com/',
+        'domain': 'doubao.com',
+        'home_url': 'https://www.doubao.com/',
         'selectors': {
             'input': 'css:.semi-input-textarea',
             'send': 'css:#flow-end-msg-send',
-            'stop': 'css:#flow-end-msg-send',
+            'stop': 'css:[data-testid="chat_input_local_break_button"]',
             'answer': 'css:.container-P2rR72'
         }
     },

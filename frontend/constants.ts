@@ -29,7 +29,7 @@ export const MODELS: Model[] = [
   },
   {
     id: "doubao",
-    name: "Dola",
+    name: "doubao",
     icon: "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://doubao.com&size=128" // 豆包常用Logo资源
   }
 ];
