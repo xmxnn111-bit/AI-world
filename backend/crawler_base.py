@@ -18,9 +18,9 @@ class BaseBot(ABC):
 
     def activate_tab(self):
         """
-        激活或新建标签页 (回归原生 get_tab 方法)
+        激活或新建标签页 (智能等待版)
         """
-        # 1. 尝试使用 domain 查找 (DrissionPage 会自动进行模糊匹配)
+        # 1. 尝试使用 domain 查找
         if self.conf.get('domain'):
             try:
                 self.tab = self.page.get_tab(url=self.conf['domain'])
@@ -40,12 +40,18 @@ class BaseBot(ABC):
             return
 
         # 4. 没找到则新建
-        print(f"🆕 [{self.model_name}] 未找到页面 (匹配规则: {self.conf.get('domain')})，正在新建...")
+        print(f"🆕 [{self.model_name}] 新建页面: {self.conf['home_url']}")
         self.tab = self.page.new_tab(self.conf['home_url'])
-        time.sleep(2)
+
+        # 优化：等待输入框出现，最多等 10 秒
+        try:
+            if 'selectors' in self.conf and 'input' in self.conf['selectors']:
+                self.tab.wait.ele(self.conf['selectors']['input'], timeout=10)
+        except:
+            pass
 
     @abstractmethod
-    def stream_chat(self, message: str):
+    async def stream_chat(self, message: str):
         pass
 
     def stop_generation(self):
@@ -66,12 +72,18 @@ class BaseBot(ABC):
             print(f"[{self.model_name}] 停止操作失败: {e}")
 
     def _safe_to_markdown(self, content: str) -> str:
+        """HTML 转 Markdown (H1-H6 修复版)"""
         if not content: return ""
-        html_pattern = re.compile(r'<(p|div|span|pre|code|br|ul|ol|li|h[1-6]|table|blockquote|em|strong|b|i)\b', re.IGNORECASE)
-        if not html_pattern.search(content): return content
         try:
-            return md(content, heading_style="atx")
-        except Exception:
+            # heading_style="atx" 确保生成 # Title 格式
+            md_content = md(
+                content,
+                heading_style="atx",
+                strip=['script', 'style']
+            )
+            return md_content.strip()
+        except Exception as e:
+            print(f"Markdown转换失败: {e}")
             return content
 
     def _get_ele(self, selector_config):
@@ -99,37 +111,39 @@ class BaseBot(ABC):
         return None
 
     async def _robust_stream_loop(self, answer_box, answer_selector):
-        """流式监听循环"""
+        """
+        流式监听循环 (极速响应 + 强制兜底版)
+        """
         previous_len = 0
-        time.sleep(2)
+        await asyncio.sleep(0.5)
+
         last_content_change_time = time.time()
         stop_btn_missing_start_time = None
 
         while True:
             try:
-                # 元素保活 (防止页面重绘导致元素失效)
-                if time.time() - last_content_change_time > 2:
-                    try:
-                        latest_answers = self.tab.eles(answer_selector)
-                        if latest_answers:
-                            answer_box = latest_answers[-1]
-                    except:
-                        pass
+                # --- 1. 元素保活 ---
+                try:
+                    _ = answer_box.tag
+                except:
+                    latest_answers = self.tab.eles(answer_selector)
+                    if latest_answers:
+                        answer_box = latest_answers[-1]
 
-                # 获取内容
+                # --- 2. 获取内容 ---
                 current_html = answer_box.inner_html
                 current_len = len(current_html)
 
-                # --- 状态检查 1：内容变化 ---
+                # --- 3. 状态检查：内容变化 ---
                 if current_len > previous_len:
                     markdown_content = self._safe_to_markdown(current_html)
                     yield markdown_content
+
                     previous_len = current_len
                     last_content_change_time = time.time()
                     stop_btn_missing_start_time = None
 
-                # --- 状态检查 2：停止按钮 ---
-                # 使用配置中的 stop 选择器 (含 aria-disabled 检查)
+                # --- 4. 状态检查：停止按钮 ---
                 is_generating = self._get_ele(self.conf['selectors']['stop'])
 
                 if not is_generating:
@@ -138,28 +152,48 @@ class BaseBot(ABC):
                 else:
                     stop_btn_missing_start_time = None
 
-                # --- 计算持续时间 ---
-                content_silence_duration = time.time() - last_content_change_time
+                # --- 5. 计算持续时间 ---
+                now = time.time()
+                content_silence_duration = now - last_content_change_time
                 btn_missing_duration = 0
                 if stop_btn_missing_start_time:
-                    btn_missing_duration = time.time() - stop_btn_missing_start_time
+                    btn_missing_duration = now - stop_btn_missing_start_time
 
-                # --- 退出判定 (双重防抖) ---
-                if content_silence_duration > 3 and btn_missing_duration > 2:
-                    print(f"[{self.model_name}] 生成结束 (静默+按钮消失确认)")
+                # --- 6. 退出判定策略 (组合策略) ---
+                should_break = False
+
+                # 策略 A: 按钮消失 + 短暂静默 (最常见：生成完毕)
+                if btn_missing_duration > 0.5 and content_silence_duration > 0.8:
+                    should_break = True
+
+                # 策略 B: 按钮还在 + 长时间静默 (异常：可能卡死)
+                elif content_silence_duration > 5:
+                    should_break = True
+
+                # 策略 C: 绝对超时 (防止死循环)
+                elif content_silence_duration > 60:
+                    should_break = True
+
+                if should_break:
+                    # === 核心修改：只要决定退出，就强制抓取最后一次 ===
+                    print(f"[{self.model_name}] 🛑 抓取结束条件触发，执行最终兜底...")
+                    try:
+                        # 不管长度有没有变，最后再发一次，确保万无一失
+                        final_content = self._safe_to_markdown(answer_box.inner_html)
+                        yield final_content
+                    except Exception as e:
+                        # 如果此时元素正好被销毁了，那也没办法，忽略即可
+                        pass
                     break
 
-                # --- 超时保护 ---
-                if content_silence_duration > 60:
-                    print(f"[{self.model_name}] 超时退出 (60s无响应)")
-                    break
+                # 极短间隔，保证响应速度
+                await asyncio.sleep(0.1)
 
-                await asyncio.sleep(0.2)
             except Exception as e:
                 print(f"监听异常: {e}")
                 break
 
-# --- Bot 实现 (复用 BaseBot 逻辑) ---
+# --- Bot 实现 ---
 
 class DeepSeekBot(BaseBot):
     def __init__(self, page): super().__init__(page, 'deepseek')
